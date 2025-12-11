@@ -75,7 +75,7 @@ def main():
         res = subprocess.run(
                 glslc_calls
                 )
-        return
+        return res.returncode
 
     deps = glsl_generate_deps(glslc_calls.copy())
 
@@ -121,6 +121,7 @@ def main():
             print('cache result')
             cache = output_hashs
             json.dump(cache, file, indent=4)
+    return res.returncode
 
 if __name__ == '__main__':
     main()
