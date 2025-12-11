@@ -9,6 +9,7 @@ import platform
 import sys
 import hashlib
 import shutil
+import fcntl
 
 def get_all_commands(command):
     PATH = os.environ['PATH']
@@ -65,16 +66,16 @@ def hash_file_to_bytes(path):
 def main():
     config = load_config()
     cache_dir = pathlib.Path(config['cache_dir']).absolute()
-    cache_file = cache_dir / pathlib.Path.cwd().name
-    
-    if not cache_file.exists():
-        with cache_file.open('w') as file:
-            json.dump({}, file)
-
     glslc_paths = get_all_commands('glslc')
 
     glslc_calls = [str(glslc_paths[1])]
     glslc_calls.extend(sys.argv[1:])
+
+    if '-M' in sys.argv or '-MF' in sys.argv or '-MD' in sys.argv or '-MM' in sys.argv:
+        res = subprocess.run(
+                glslc_calls
+                )
+        return
 
     deps = glsl_generate_deps(glslc_calls.copy())
 
@@ -85,20 +86,22 @@ def main():
         input_files.extend(this_input_files)
     for input_file in input_files:
         inputs_hash.update(hash_file_to_bytes(input_file))
+    key = " ".join(glslc_calls)
+    inputs_hash.update(key.encode())
     inputs_hash = inputs_hash.hexdigest()
 
-    cache = None
-    key = " ".join(glslc_calls)
-    with cache_file.open() as file:
-        cache = json.load(file)
-        if key in cache:
-            if inputs_hash in cache[key]:
-                output_hashs = cache[key][inputs_hash]
-                for output_file in output_hashs:
-                    output_file_cache = cache_dir / output_hashs[output_file]
-                    shutil.copy(output_file_cache, output_file)
-                print('cache hit')
-                return
+    cache_file = cache_dir / inputs_hash
+
+    try:
+        with cache_file.open() as file:
+            cache = json.load(file)
+            for output_file in cache:
+                output_file_cache = cache_dir / cache[output_file]
+                shutil.copy(output_file_cache, output_file)
+            print('cache hit')
+            return
+    except:
+        print('cache hit except')
 
     print('run', glslc_calls)
     res = subprocess.run(
@@ -116,9 +119,7 @@ def main():
 
         with cache_file.open('w') as file:
             print('cache result')
-            if not key in cache:
-                cache[key] = {}
-            cache[key][inputs_hash] = output_hashs
+            cache = output_hashs
             json.dump(cache, file, indent=4)
 
 if __name__ == '__main__':
