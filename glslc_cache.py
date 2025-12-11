@@ -7,6 +7,8 @@ import json
 import subprocess
 import platform
 import sys
+import hashlib
+import shutil
 
 def get_all_commands(command):
     PATH = os.environ['PATH']
@@ -36,16 +38,29 @@ def load_config():
 
 def glsl_generate_deps(cmds):
     cmds.append('-M')
-    res = subprocess.run(cmds, capture_out=True, encoding='utf-8')
+    res = subprocess.run(cmds, capture_output=True, encoding='utf-8')
     deps_out = res.stdout
     deps_lines = deps_out.splitlines()
     deps = {}
     for dep_line in deps_lines:
         files = dep_line.split(' ')
         output = files[0].removesuffix(':')
+        if '-c' not in cmds and '-S' not in cmds:
+            output = 'a.spv'
         inputs = files[1:]
         deps[output] = inputs
     return deps
+
+def hash_file(path):
+    digest = 0
+    with open(path, "rb") as f:
+        digest = hashlib.file_digest(f, "sha256")
+    return digest.hexdigest()
+def hash_file_to_bytes(path):
+    digest = 0
+    with open(path, "rb") as f:
+        digest = hashlib.file_digest(f, "sha256")
+    return digest.digest()
 
 def main():
     config = load_config()
@@ -53,53 +68,58 @@ def main():
     cache_file = cache_dir / pathlib.Path.cwd().name
     
     if not cache_file.exists():
-        cache_file.touch()
+        with cache_file.open('w') as file:
+            json.dump({}, file)
 
     glslc_paths = get_all_commands('glslc')
 
-    glslc_calls = sys.argv
-    glslc_calls[0] = glslc_paths[1]
+    glslc_calls = [str(glslc_paths[1])]
+    glslc_calls.extend(sys.argv[1:])
 
-    deps = glsl_generate_deps(glslc_calls)
+    deps = glsl_generate_deps(glslc_calls.copy())
 
     input_files = []
-    input_hashs = {}
+    inputs_hash = hashlib.sha256()
     for output_file in deps:
         this_input_files = deps[output_file]
-        input_files.merge(this_input_files)
+        input_files.extend(this_input_files)
+    for input_file in input_files:
+        inputs_hash.update(hash_file_to_bytes(input_file))
+    inputs_hash = inputs_hash.hexdigest()
 
-    input_hash = hash(input_hashs)
-
-    with cache_file.open() as cache_file:
-        cache = json.load(cache_file)
-        key = "".join(glslc_calls)
+    cache = None
+    key = " ".join(glslc_calls)
+    with cache_file.open() as file:
+        cache = json.load(file)
         if key in cache:
-            cache = cache[key]
-            if input_hash in cache:
-                output_hashs = cache[input_hash]
+            if inputs_hash in cache[key]:
+                output_hashs = cache[key][inputs_hash]
                 for output_file in output_hashs:
                     output_file_cache = cache_dir / output_hashs[output_file]
-                    copy_file(outpu_file_cache, output)
+                    shutil.copy(output_file_cache, output_file)
+                print('cache hit')
                 return
 
-    subprocess.run(
+    print('run', glslc_calls)
+    res = subprocess.run(
             glslc_calls
             )
 
-    output_hashs = {}
-    for output_file in deps:
-        output_hash = hash_file(output_file)
-        output_hashs[output_file] = output_hash
-        output_file_cache = cache_dir / output_hash
-        copy_file(output_file, output_file_cache)
+    if res.returncode == 0:
+        output_hashs = {}
+        for output_file in deps:
+            output_hash = hash_file(output_file)
+            output_hashs[output_file] = output_hash
+            output_file_cache = cache_dir / output_hash
+            output_file = pathlib.Path(output_file)
+            shutil.copy(output_file, output_file_cache)
 
-    with cache_file.open('rw') as cache_file:
-        cache = json.load(cache_file)
-        key = "".join(glslc_calls)
-        if not key in cache:
-            cache[key] = {}
-        cache = cache[key]
-        cache[input_hash] = output_hashs
+        with cache_file.open('w') as file:
+            print('cache result')
+            if not key in cache:
+                cache[key] = {}
+            cache[key][inputs_hash] = output_hashs
+            json.dump(cache, file, indent=4)
 
 if __name__ == '__main__':
     main()
