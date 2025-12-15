@@ -9,7 +9,6 @@ import platform
 import sys
 import hashlib
 import shutil
-import fcntl
 
 def get_all_commands(command):
     PATH = os.environ['PATH']
@@ -17,6 +16,8 @@ def get_all_commands(command):
     sep = ':'
     if system == 'Windows':
         sep = ';'
+        if not command.endswith('.exe'):
+            command = command + '.exe'
     paths = PATH.split(sep)
 
     command_full_paths = []
@@ -68,6 +69,7 @@ def main():
     cache_dir = pathlib.Path(config['cache_dir']).absolute()
     glslc_paths = get_all_commands('glslc')
 
+    print(glslc_paths)
     glslc_calls = [str(glslc_paths[1])]
     glslc_calls.extend(sys.argv[1:])
 
