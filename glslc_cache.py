@@ -67,6 +67,8 @@ def hash_file_to_bytes(path):
 def main():
     config = load_config()
     cache_dir = pathlib.Path(config['cache_dir']).absolute()
+    if not cache_dir.exists():
+        cache_dir.mkdir()
     glslc_paths = get_all_commands('glslc')
 
     print(glslc_paths)
